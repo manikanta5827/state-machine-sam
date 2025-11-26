@@ -1,0 +1,73 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Sam template for step functions
+
+Resources:
+  # Purchase Handler
+  PurchaseLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: PurchaseHandler
+      CodeUri: functions/purchase
+      Architectures:
+        - arm64
+      Handler: app.lambdaHandler
+      Runtime: nodejs22.x
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+
+  # Refund Handler
+  RefundLambda:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: RefundHandler
+      CodeUri: functions/refund
+      Runtime: nodejs22.x
+      Architectures:
+        - arm64
+      Handler: app.lambdaHandler
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        Minify: false
+        Target: es2020
+        Sourcemap: true
+        EntryPoints:
+          - app.ts
+
+  # Dynamo DB handler
+  OrdersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: OrdersTable
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: orderId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: orderId
+          KeyType: HASH
+
+  # State Machine
+  OrderStateMachine:
+    Type: AWS::Serverless::StateMachine
+    Properties:
+      Name: OrderWorkflow
+      DefinitionUri: statemachine/order-flow.asl.json
+      DefinitionSubstitutions:
+        PurchaseLambdaArn: !GetAtt PurchaseLambda.Arn
+        RefundLambdaArn: !GetAtt RefundLambda.Arn
+        OrdersTable: !Ref OrdersTable
+      Policies:
+        - LambdaInvokePolicy:
+            FunctionName: !Ref PurchaseLambda
+        - LambdaInvokePolicy:
+            FunctionName: !Ref RefundLambda
+        - DynamoDBCrudPolicy:
+            TableName: !Ref OrdersTable

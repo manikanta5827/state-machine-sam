@@ -1,0 +1,118 @@
+{
+  "Comment": "Step function template",
+  "QueryLanguage": "JSONata",
+  "StartAt": "Router",
+  "States": {
+    "Router": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Condition": "{% $states.input.type = 'PURCHASE' %}",
+          "Next": "PurchaseHandler"
+        }
+      ],
+      "Default": "RefundHandler"
+    },
+
+    "PurchaseHandler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": {
+        "FunctionName": "${PurchaseLambdaArn}",
+        "Payload": "{% $states.input %}"
+      },
+      "Output": "{% $states.result.Payload %}",
+      "Next": "BackupInput",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "GenericLambdaErrorHandler"
+        }
+      ]
+    },
+
+    "RefundHandler": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::lambda:invoke",
+      "Arguments": {
+        "FunctionName": "${RefundLambdaArn}",
+        "Payload": "{% $states.input %}"
+      },
+      "Output": "{% $states.result.Payload %}",
+      "Next": "SaveToDBWithCondition",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "GenericLambdaErrorHandler"
+        }
+      ]
+    },
+
+    "SaveToDBWithCondition": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Arguments": {
+        "TableName": "${OrdersTable}",
+        "Item": {
+          "orderId": { "S": "{% $states.input.data.orderId %}" },
+          "status": { "S": "{% $states.input.data.status %}" }
+        },
+        "ConditionExpression": "attribute_not_exists(orderId)"
+      },
+      "Next": "SuccessState",
+      "Catch": [
+        {
+          "ErrorEquals": ["DynamoDB.ConditionalCheckFailedException"],
+          "Next": "SaveDuplicateOperationToDB"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "GenericDBErrorHandler"
+        }
+      ]
+    },
+
+    "SaveDuplicateOperationToDB": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:putItem",
+      "Arguments": {
+        "TableName": "${OrdersTable}",
+        "Item": {
+          "orderId": { "S": "{% $states.context.Execution.Input.orderId %}" },
+          "status": { "S": "{% $states.context.Execution.Input.status %}" }
+        }
+      },
+      "Next": "SuccessState",
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "GenericDBErrorHandler"
+        }
+      ]
+    },
+
+    "BackupInput": {
+      "Type": "Pass",
+      "Output": "{% { \"data\": $states.input } %}",
+      "Next": "SaveToDBWithCondition"
+    },
+
+    "SuccessState": {
+      "Type": "Pass",
+      "Output": "{% { \"message\": \"Flow Completed Successfully\", \"event\" : $states } %}",
+      "End": true
+    },
+
+    "GenericLambdaErrorHandler": {
+      "Type": "Pass",
+      "Output": "{% { \"message\": \"Lambda Flow Failed\" } %}",
+      "End": true
+    },
+
+    "GenericDBErrorHandler": {
+      "Type": "Pass",
+      "Output": "{% { \"message\": \"DB Flow Failed\"} %}",
+      "End": true
+    }
+  }
+}
